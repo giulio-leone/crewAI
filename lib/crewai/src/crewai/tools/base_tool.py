@@ -5,6 +5,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from inspect import Parameter, signature
 import json
+import threading
 from typing import (
     Any,
     Generic,
@@ -18,14 +19,16 @@ from pydantic import (
     BaseModel as PydanticBaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     create_model,
     field_validator,
 )
 from typing_extensions import TypeIs
 
-from crewai.tools.structured_tool import CrewStructuredTool
+from crewai.tools.structured_tool import CrewStructuredTool, build_schema_hint
 from crewai.utilities.printer import Printer
 from crewai.utilities.pydantic_schema_utils import generate_model_description
+from crewai.utilities.string_utils import sanitize_tool_name
 
 
 _printer = Printer()
@@ -93,6 +96,7 @@ class BaseTool(BaseModel, ABC):
         default=0,
         description="Current number of times this tool has been used.",
     )
+    _usage_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
 
     @field_validator("args_schema", mode="before")
     @classmethod
@@ -149,19 +153,64 @@ class BaseTool(BaseModel, ABC):
 
         super().model_post_init(__context)
 
+    def _validate_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        """Validate keyword arguments against args_schema if present.
+
+        Args:
+            kwargs: The keyword arguments to validate.
+
+        Returns:
+            Validated (and possibly coerced) keyword arguments.
+
+        Raises:
+            ValueError: If validation against args_schema fails.
+        """
+        if self.args_schema is not None and self.args_schema.model_fields:
+            try:
+                validated = self.args_schema.model_validate(kwargs)
+                return validated.model_dump()
+            except Exception as e:
+                hint = build_schema_hint(self.args_schema)
+                raise ValueError(
+                    f"Tool '{self.name}' arguments validation failed: {e}{hint}"
+                ) from e
+        return kwargs
+
+    def _claim_usage(self) -> str | None:
+        """Atomically check max usage and increment the counter.
+
+        Returns:
+            None if usage was claimed successfully, or an error message
+            string if the tool has reached its usage limit.
+        """
+        with self._usage_lock:
+            if (
+                self.max_usage_count is not None
+                and self.current_usage_count >= self.max_usage_count
+            ):
+                return (
+                    f"Tool '{self.name}' has reached its usage limit of "
+                    f"{self.max_usage_count} times and cannot be used anymore."
+                )
+            self.current_usage_count += 1
+            return None
+
     def run(
         self,
         *args: Any,
         **kwargs: Any,
     ) -> Any:
-        _printer.print(f"Using Tool: {self.name}", color="cyan")
+        if not args:
+            kwargs = self._validate_kwargs(kwargs)
+
+        limit_error = self._claim_usage()
+        if limit_error:
+            return limit_error
+
         result = self._run(*args, **kwargs)
 
-        # If _run is async, we safely run it
         if asyncio.iscoroutine(result):
             result = asyncio.run(result)
-
-        self.current_usage_count += 1
 
         return result
 
@@ -179,9 +228,14 @@ class BaseTool(BaseModel, ABC):
         Returns:
             The result of the tool execution.
         """
-        result = await self._arun(*args, **kwargs)
-        self.current_usage_count += 1
-        return result
+        if not args:
+            kwargs = self._validate_kwargs(kwargs)
+
+        limit_error = self._claim_usage()
+        if limit_error:
+            return limit_error
+
+        return await self._arun(*args, **kwargs)
 
     async def _arun(
         self,
@@ -227,6 +281,7 @@ class BaseTool(BaseModel, ABC):
             result_as_answer=self.result_as_answer,
             max_usage_count=self.max_usage_count,
             current_usage_count=self.current_usage_count,
+            cache_function=self.cache_function,
         )
         structured_tool._original_tool = self
         return structured_tool
@@ -260,10 +315,12 @@ class BaseTool(BaseModel, ABC):
                 else:
                     fields[name] = (param_annotation, param.default)
             if fields:
-                args_schema = create_model(f"{tool.name}Input", **fields)
+                args_schema = create_model(
+                    f"{sanitize_tool_name(tool.name)}_input", **fields
+                )
             else:
                 args_schema = create_model(
-                    f"{tool.name}Input", __base__=PydanticBaseModel
+                    f"{sanitize_tool_name(tool.name)}_input", __base__=PydanticBaseModel
                 )
 
         return cls(
@@ -302,7 +359,7 @@ class BaseTool(BaseModel, ABC):
         schema = generate_model_description(self.args_schema)
         args_json = json.dumps(schema["json_schema"]["schema"], indent=2)
         self.description = (
-            f"Tool Name: {self.name}\n"
+            f"Tool Name: {sanitize_tool_name(self.name)}\n"
             f"Tool Arguments: {args_json}\n"
             f"Tool Description: {self.description}"
         )
@@ -329,13 +386,18 @@ class Tool(BaseTool, Generic[P, R]):
         Returns:
             The result of the tool execution.
         """
-        _printer.print(f"Using Tool: {self.name}", color="cyan")
+        if not args:
+            kwargs = self._validate_kwargs(kwargs)  # type: ignore[assignment]
+
+        limit_error = self._claim_usage()
+        if limit_error:
+            return limit_error  # type: ignore[return-value]
+
         result = self.func(*args, **kwargs)
 
         if asyncio.iscoroutine(result):
             result = asyncio.run(result)
 
-        self.current_usage_count += 1
         return result  # type: ignore[return-value]
 
     def _run(self, *args: P.args, **kwargs: P.kwargs) -> R:
@@ -360,9 +422,14 @@ class Tool(BaseTool, Generic[P, R]):
         Returns:
             The result of the tool execution.
         """
-        result = await self._arun(*args, **kwargs)
-        self.current_usage_count += 1
-        return result
+        if not args:
+            kwargs = self._validate_kwargs(kwargs)  # type: ignore[assignment]
+
+        limit_error = self._claim_usage()
+        if limit_error:
+            return limit_error  # type: ignore[return-value]
+
+        return await self._arun(*args, **kwargs)
 
     async def _arun(self, *args: P.args, **kwargs: P.kwargs) -> R:
         """Executes the wrapped function asynchronously.
@@ -381,7 +448,7 @@ class Tool(BaseTool, Generic[P, R]):
         if _is_awaitable(result):
             return await result
         raise NotImplementedError(
-            f"{self.name} does not have an async function. "
+            f"{sanitize_tool_name(self.name)} does not have an async function. "
             "Use run() for sync execution or provide an async function."
         )
 
@@ -423,10 +490,12 @@ class Tool(BaseTool, Generic[P, R]):
                 else:
                     fields[name] = (param_annotation, param.default)
             if fields:
-                args_schema = create_model(f"{tool.name}Input", **fields)
+                args_schema = create_model(
+                    f"{sanitize_tool_name(tool.name)}_input", **fields
+                )
             else:
                 args_schema = create_model(
-                    f"{tool.name}Input", __base__=PydanticBaseModel
+                    f"{sanitize_tool_name(tool.name)}_input", __base__=PydanticBaseModel
                 )
 
         return cls(

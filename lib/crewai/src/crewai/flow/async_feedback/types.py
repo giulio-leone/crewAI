@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+
 if TYPE_CHECKING:
     from crewai.flow.flow import Flow
 
@@ -59,7 +60,7 @@ class PendingFeedbackContext:
     emit: list[str] | None = None
     default_outcome: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    llm: str | None = None
+    llm: dict[str, Any] | str | None = None
     requested_at: datetime = field(default_factory=datetime.now)
 
     def to_dict(self) -> dict[str, Any]:
@@ -155,7 +156,7 @@ class HumanFeedbackPending(Exception):  # noqa: N818 - Not an error, a control f
                     callback_info={
                         "slack_channel": "#reviews",
                         "thread_id": ticket_id,
-                    }
+                    },
                 )
         ```
     """
@@ -232,7 +233,7 @@ class HumanFeedbackProvider(Protocol):
                     callback_info={
                         "channel": self.channel,
                         "thread_id": thread_id,
-                    }
+                    },
                 )
         ```
     """
@@ -240,7 +241,7 @@ class HumanFeedbackProvider(Protocol):
     def request_feedback(
         self,
         context: PendingFeedbackContext,
-        flow: Flow,
+        flow: Flow[Any],
     ) -> str:
         """Request feedback from a human.
 

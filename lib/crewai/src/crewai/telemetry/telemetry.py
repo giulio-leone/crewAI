@@ -52,6 +52,7 @@ from crewai.telemetry.utils import (
     close_span,
 )
 from crewai.utilities.logger_utils import suppress_warnings
+from crewai.utilities.string_utils import sanitize_tool_name
 
 
 logger = logging.getLogger(__name__)
@@ -171,6 +172,12 @@ class Telemetry:
         atexit.register(self._shutdown)
 
         self._original_handlers: dict[int, Any] = {}
+
+        if threading.current_thread() is not threading.main_thread():
+            logger.debug(
+                "Skipping signal handler registration: not running in main thread"
+            )
+            return
 
         self._register_signal_handler(signal.SIGTERM, SigTermEvent, shutdown=True)
         self._register_signal_handler(signal.SIGINT, SigIntEvent, shutdown=True)
@@ -323,7 +330,8 @@ class Telemetry:
                                 ),
                                 "max_retry_limit": getattr(agent, "max_retry_limit", 3),
                                 "tools_names": [
-                                    tool.name.casefold() for tool in agent.tools or []
+                                    sanitize_tool_name(tool.name)
+                                    for tool in agent.tools or []
                                 ],
                                 # Add agent fingerprint data if sharing crew details
                                 "fingerprint": (
@@ -372,7 +380,8 @@ class Telemetry:
                                     else None
                                 ),
                                 "tools_names": [
-                                    tool.name.casefold() for tool in task.tools or []
+                                    sanitize_tool_name(tool.name)
+                                    for tool in task.tools or []
                                 ],
                                 # Add task fingerprint data if sharing crew details
                                 "fingerprint": (
@@ -425,7 +434,8 @@ class Telemetry:
                                 ),
                                 "max_retry_limit": getattr(agent, "max_retry_limit", 3),
                                 "tools_names": [
-                                    tool.name.casefold() for tool in agent.tools or []
+                                    sanitize_tool_name(tool.name)
+                                    for tool in agent.tools or []
                                 ],
                             }
                             for agent in crew.agents
@@ -447,7 +457,8 @@ class Telemetry:
                                 ),
                                 "agent_key": task.agent.key if task.agent else None,
                                 "tools_names": [
-                                    tool.name.casefold() for tool in task.tools or []
+                                    sanitize_tool_name(tool.name)
+                                    for tool in task.tools or []
                                 ],
                             }
                             for task in crew.tasks
@@ -832,7 +843,8 @@ class Telemetry:
                             "llm": agent.llm.model,
                             "delegation_enabled?": agent.allow_delegation,
                             "tools_names": [
-                                tool.name.casefold() for tool in agent.tools or []
+                                sanitize_tool_name(tool.name)
+                                for tool in agent.tools or []
                             ],
                         }
                         for agent in crew.agents
@@ -858,7 +870,8 @@ class Telemetry:
                                 else None
                             ),
                             "tools_names": [
-                                tool.name.casefold() for tool in task.tools or []
+                                sanitize_tool_name(tool.name)
+                                for tool in task.tools or []
                             ],
                         }
                         for task in crew.tasks
@@ -896,7 +909,7 @@ class Telemetry:
                         {
                             "id": str(task.id),
                             "description": task.description,
-                            "output": task.output.raw_output,
+                            "output": task.output.raw if task.output else "",
                         }
                         for task in crew.tasks
                     ]
@@ -915,6 +928,9 @@ class Telemetry:
             key: The attribute key.
             value: The attribute value.
         """
+
+        if span is None:
+            return
 
         def _operation() -> None:
             return span.set_attribute(key, value)
@@ -966,6 +982,22 @@ class Telemetry:
             span = tracer.start_span("Flow Execution")
             self._add_attribute(span, "flow_name", flow_name)
             self._add_attribute(span, "node_names", json.dumps(node_names))
+            close_span(span)
+
+        self._safe_telemetry_operation(_operation)
+
+    def env_context_span(self, tool: str) -> None:
+        """Records the coding tool environment context."""
+
+        def _operation() -> None:
+            tracer = trace.get_tracer("crewai.telemetry")
+            span = tracer.start_span("Environment Context")
+            self._add_attribute(
+                span,
+                "crewai_version",
+                version("crewai"),
+            )
+            self._add_attribute(span, "tool", tool)
             close_span(span)
 
         self._safe_telemetry_operation(_operation)

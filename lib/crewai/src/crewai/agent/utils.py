@@ -17,6 +17,7 @@ from crewai.events.types.knowledge_events import (
 )
 from crewai.knowledge.utils.knowledge_utils import extract_knowledge_context
 from crewai.utilities.pydantic_schema_utils import generate_model_description
+from crewai.utilities.types import LLMMessage
 
 
 if TYPE_CHECKING:
@@ -27,13 +28,20 @@ if TYPE_CHECKING:
 
 
 def handle_reasoning(agent: Agent, task: Task) -> None:
-    """Handle the reasoning process for an agent before task execution.
+    """Handle the reasoning/planning process for an agent before task execution.
+
+    This function checks if planning is enabled for the agent and, if so,
+    creates a plan that gets appended to the task description.
+
+    Note: This function is used by CrewAgentExecutor (legacy path).
+    For AgentExecutor, planning is handled in AgentExecutor.generate_plan().
 
     Args:
         agent: The agent performing the task.
         task: The task to execute.
     """
-    if not agent.reasoning:
+    # Check if planning is enabled using the planning_enabled property
+    if not getattr(agent, "planning_enabled", False):
         return
 
     try:
@@ -42,13 +50,13 @@ def handle_reasoning(agent: Agent, task: Task) -> None:
             AgentReasoningOutput,
         )
 
-        reasoning_handler = AgentReasoning(task=task, agent=agent)
-        reasoning_output: AgentReasoningOutput = (
-            reasoning_handler.handle_agent_reasoning()
+        planning_handler = AgentReasoning(agent=agent, task=task)
+        planning_output: AgentReasoningOutput = (
+            planning_handler.handle_agent_reasoning()
         )
-        task.description += f"\n\nReasoning Plan:\n{reasoning_output.plan.plan}"
+        task.description += f"\n\nPlanning:\n{planning_output.plan.plan}"
     except Exception as e:
-        agent._logger.log("error", f"Error during reasoning process: {e!s}")
+        agent._logger.log("error", f"Error during planning: {e!s}")
 
 
 def build_task_prompt_with_schema(task: Task, task_prompt: str, i18n: I18N) -> str:
@@ -202,6 +210,30 @@ def _combine_knowledge_context(agent: Agent) -> str:
     return agent_ctx + separator + crew_ctx
 
 
+def append_skill_context(agent: Agent, task_prompt: str) -> str:
+    """Append activated skill context sections to the task prompt.
+
+    Args:
+        agent: The agent with optional skills.
+        task_prompt: The current task prompt.
+
+    Returns:
+        The task prompt with skill context appended.
+    """
+    if not agent.skills:
+        return task_prompt
+
+    from crewai.skills.loader import format_skill_context
+    from crewai.skills.models import Skill
+
+    skill_sections = [
+        format_skill_context(s) for s in agent.skills if isinstance(s, Skill)
+    ]
+    if skill_sections:
+        task_prompt += "\n\n" + "\n\n".join(skill_sections)
+    return task_prompt
+
+
 def apply_training_data(agent: Agent, task_prompt: str) -> str:
     """Apply training data to the task prompt.
 
@@ -236,14 +268,40 @@ def process_tool_results(agent: Agent, result: Any) -> Any:
 def save_last_messages(agent: Agent) -> None:
     """Save the last messages from agent executor.
 
+    Sanitizes messages to be compatible with TaskOutput's LLMMessage type,
+    which accepts 'user', 'assistant', 'system', and 'tool' roles.
+    Preserves tool_call_id/name for tool messages and tool_calls for assistant messages.
+
     Args:
         agent: The agent instance.
     """
-    agent._last_messages = (
-        agent.agent_executor.messages.copy()
-        if agent.agent_executor and hasattr(agent.agent_executor, "messages")
-        else []
-    )
+    if not agent.agent_executor or not hasattr(agent.agent_executor, "messages"):
+        agent._last_messages = []
+        return
+
+    sanitized_messages: list[LLMMessage] = []
+    for msg in agent.agent_executor.messages:
+        role = msg.get("role", "")
+        if role not in ("user", "assistant", "system", "tool"):
+            continue
+        content = msg.get("content")
+        if content is None:
+            content = ""
+        sanitized_msg: LLMMessage = {"role": role, "content": content}
+        if role == "tool":
+            tool_call_id = msg.get("tool_call_id")
+            if tool_call_id:
+                sanitized_msg["tool_call_id"] = tool_call_id
+            name = msg.get("name")
+            if name:
+                sanitized_msg["name"] = name
+        elif role == "assistant":
+            tool_calls = msg.get("tool_calls")
+            if tool_calls:
+                sanitized_msg["tool_calls"] = tool_calls
+        sanitized_messages.append(sanitized_msg)
+
+    agent._last_messages = sanitized_messages
 
 
 def prepare_tools(

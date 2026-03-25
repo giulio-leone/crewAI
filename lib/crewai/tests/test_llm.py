@@ -211,7 +211,7 @@ def test_llm_passes_additional_params():
 
 
 def test_get_custom_llm_provider_openrouter():
-    llm = LLM(model="openrouter/deepseek/deepseek-chat")
+    llm = LLM(model="openrouter/deepseek/deepseek-chat", is_litellm=True)
     assert llm._get_custom_llm_provider() == "openrouter"
 
 
@@ -232,7 +232,9 @@ def test_validate_call_params_supported():
     # Patch supports_response_schema to simulate a supported model.
     with patch("crewai.llm.supports_response_schema", return_value=True):
         llm = LLM(
-            model="openrouter/deepseek/deepseek-chat", response_format=DummyResponse
+            model="openrouter/deepseek/deepseek-chat",
+            response_format=DummyResponse,
+            is_litellm=True,
         )
         # Should not raise any error.
         llm._validate_call_params()
@@ -930,7 +932,7 @@ def test_usage_info_streaming_with_call():
 @pytest.mark.vcr(record_mode="once",decode_compressed_response=True,match_on=["method", "scheme", "host", "path", "body"])
 async def test_usage_info_non_streaming_with_acall():
     llm = LLM(
-        model="openai/gpt-4o-mini", 
+        model="openai/gpt-4o-mini",
         is_litellm=True,
         stream=False,
     )
@@ -960,7 +962,39 @@ async def test_usage_info_non_streaming_with_acall():
 
 
 @pytest.mark.asyncio
-@pytest.mark.vcr(record_mode="none",decode_compressed_response=True,match_on=["method", "scheme", "host", "path", "body"])
+@pytest.mark.vcr(record_mode="once",decode_compressed_response=True,match_on=["method", "scheme", "host", "path", "body"])
+async def test_usage_info_non_streaming_with_acall_and_stop():
+    llm = LLM(
+        model="openai/gpt-4o-mini",
+        is_litellm=True,
+        stream=False,
+        stop=["END"],
+    )
+
+    assert llm._token_usage == {
+        "total_tokens": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "successful_requests": 0,
+        "cached_prompt_tokens": 0,
+    }
+
+    with patch.object(
+        llm, "_ahandle_non_streaming_response", wraps=llm._ahandle_non_streaming_response
+    ) as mock_handle:
+        result = await llm.acall("Tell me a joke.")
+        mock_handle.assert_called_once()
+
+    assert llm._token_usage["successful_requests"] == 1
+    assert llm._token_usage["prompt_tokens"] > 0
+    assert llm._token_usage["completion_tokens"] > 0
+    assert llm._token_usage["total_tokens"] > 0
+
+    assert len(result) > 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.vcr()
 async def test_usage_info_streaming_with_acall():
     llm = LLM(
         model="gpt-4o-mini",
@@ -976,7 +1010,7 @@ async def test_usage_info_streaming_with_acall():
         "successful_requests": 0,
         "cached_prompt_tokens": 0,
     }
-    
+
     with patch.object(
         llm, "_ahandle_streaming_response", wraps=llm._ahandle_streaming_response
     ) as mock_handle:

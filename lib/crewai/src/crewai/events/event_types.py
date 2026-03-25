@@ -67,6 +67,7 @@ from crewai.events.types.llm_guardrail_events import (
     LLMGuardrailStartedEvent,
 )
 from crewai.events.types.mcp_events import (
+    MCPConfigFetchFailedEvent,
     MCPConnectionCompletedEvent,
     MCPConnectionFailedEvent,
     MCPConnectionStartedEvent,
@@ -79,6 +80,7 @@ from crewai.events.types.memory_events import (
     MemoryQueryFailedEvent,
     MemoryQueryStartedEvent,
     MemoryRetrievalCompletedEvent,
+    MemoryRetrievalFailedEvent,
     MemoryRetrievalStartedEvent,
     MemorySaveCompletedEvent,
     MemorySaveFailedEvent,
@@ -173,10 +175,12 @@ EventTypes = (
     | MemoryQueryFailedEvent
     | MemoryRetrievalStartedEvent
     | MemoryRetrievalCompletedEvent
+    | MemoryRetrievalFailedEvent
     | MCPConnectionStartedEvent
     | MCPConnectionCompletedEvent
     | MCPConnectionFailedEvent
     | MCPToolExecutionStartedEvent
     | MCPToolExecutionCompletedEvent
     | MCPToolExecutionFailedEvent
+    | MCPConfigFetchFailedEvent
 )

@@ -14,18 +14,39 @@ from typing import (
 from pydantic import BeforeValidator, HttpUrl, TypeAdapter
 from typing_extensions import NotRequired
 
-from crewai.a2a.updates import (
-    PollingConfig,
-    PollingHandler,
-    PushNotificationConfig,
-    PushNotificationHandler,
-    StreamingConfig,
-    StreamingHandler,
-    UpdateConfig,
-)
+
+try:
+    from crewai.a2a.updates import (
+        PollingConfig,
+        PollingHandler,
+        PushNotificationConfig,
+        PushNotificationHandler,
+        StreamingConfig,
+        StreamingHandler,
+        UpdateConfig,
+    )
+except ImportError:
+    PollingConfig = Any  # type: ignore[misc,assignment]
+    PollingHandler = Any  # type: ignore[misc,assignment]
+    PushNotificationConfig = Any  # type: ignore[misc,assignment]
+    PushNotificationHandler = Any  # type: ignore[misc,assignment]
+    StreamingConfig = Any  # type: ignore[misc,assignment]
+    StreamingHandler = Any  # type: ignore[misc,assignment]
+    UpdateConfig = Any  # type: ignore[misc,assignment]
 
 
 TransportType = Literal["JSONRPC", "GRPC", "HTTP+JSON"]
+ProtocolVersion = Literal[
+    "0.2.0",
+    "0.2.1",
+    "0.2.2",
+    "0.2.3",
+    "0.2.4",
+    "0.2.5",
+    "0.2.6",
+    "0.3.0",
+    "0.4.0",
+]
 
 http_url_adapter: TypeAdapter[HttpUrl] = TypeAdapter(HttpUrl)
 

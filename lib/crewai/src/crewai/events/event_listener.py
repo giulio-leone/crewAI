@@ -34,6 +34,12 @@ from crewai.events.types.crew_events import (
     CrewTrainFailedEvent,
     CrewTrainStartedEvent,
 )
+from crewai.events.types.env_events import (
+    CCEnvEvent,
+    CodexEnvEvent,
+    CursorEnvEvent,
+    DefaultEnvEvent,
+)
 from crewai.events.types.flow_events import (
     FlowCreatedEvent,
     FlowFinishedEvent,
@@ -68,11 +74,20 @@ from crewai.events.types.logging_events import (
     AgentLogsStartedEvent,
 )
 from crewai.events.types.mcp_events import (
+    MCPConfigFetchFailedEvent,
     MCPConnectionCompletedEvent,
     MCPConnectionFailedEvent,
     MCPConnectionStartedEvent,
     MCPToolExecutionFailedEvent,
     MCPToolExecutionStartedEvent,
+)
+from crewai.events.types.observation_events import (
+    GoalAchievedEarlyEvent,
+    PlanRefinementEvent,
+    PlanReplanTriggeredEvent,
+    StepObservationCompletedEvent,
+    StepObservationFailedEvent,
+    StepObservationStartedEvent,
 )
 from crewai.events.types.reasoning_events import (
     AgentReasoningCompletedEvent,
@@ -134,6 +149,23 @@ class EventListener(BaseEventListener):
     # ----------- CREW EVENTS -----------
 
     def setup_listeners(self, crewai_event_bus: CrewAIEventsBus) -> None:
+
+        @crewai_event_bus.on(CCEnvEvent)
+        def on_cc_env(_: Any, event: CCEnvEvent) -> None:
+            self._telemetry.env_context_span(event.type)
+
+        @crewai_event_bus.on(CodexEnvEvent)
+        def on_codex_env(_: Any, event: CodexEnvEvent) -> None:
+            self._telemetry.env_context_span(event.type)
+
+        @crewai_event_bus.on(CursorEnvEvent)
+        def on_cursor_env(_: Any, event: CursorEnvEvent) -> None:
+            self._telemetry.env_context_span(event.type)
+
+        @crewai_event_bus.on(DefaultEnvEvent)
+        def on_default_env(_: Any, event: DefaultEnvEvent) -> None:
+            self._telemetry.env_context_span(event.type)
+
         @crewai_event_bus.on(CrewKickoffStartedEvent)
         def on_crew_started(source: Any, event: CrewKickoffStartedEvent) -> None:
             self.formatter.handle_crew_started(event.crew_name or "Crew", source.id)
@@ -378,6 +410,12 @@ class EventListener(BaseEventListener):
                 self.formatter.handle_llm_tool_usage_finished(
                     event.tool_name,
                 )
+            else:
+                self.formatter.handle_tool_usage_finished(
+                    event.tool_name,
+                    event.output,
+                    getattr(event, "run_attempts", None),
+                )
 
         @crewai_event_bus.on(ToolUsageErrorEvent)
         def on_tool_usage_error(source: Any, event: ToolUsageErrorEvent) -> None:
@@ -528,6 +566,64 @@ class EventListener(BaseEventListener):
                 event.error,
             )
 
+        # ----------- OBSERVATION EVENTS (Plan-and-Execute) -----------
+
+        @crewai_event_bus.on(StepObservationStartedEvent)
+        def on_step_observation_started(
+            _: Any, event: StepObservationStartedEvent
+        ) -> None:
+            self.formatter.handle_observation_started(
+                event.agent_role,
+                event.step_number,
+                event.step_description,
+            )
+
+        @crewai_event_bus.on(StepObservationCompletedEvent)
+        def on_step_observation_completed(
+            _: Any, event: StepObservationCompletedEvent
+        ) -> None:
+            self.formatter.handle_observation_completed(
+                event.agent_role,
+                event.step_number,
+                event.step_completed_successfully,
+                event.remaining_plan_still_valid,
+                event.key_information_learned,
+                event.needs_full_replan,
+                event.goal_already_achieved,
+            )
+
+        @crewai_event_bus.on(StepObservationFailedEvent)
+        def on_step_observation_failed(
+            _: Any, event: StepObservationFailedEvent
+        ) -> None:
+            self.formatter.handle_observation_failed(
+                event.step_number,
+                event.error,
+            )
+
+        @crewai_event_bus.on(PlanRefinementEvent)
+        def on_plan_refinement(_: Any, event: PlanRefinementEvent) -> None:
+            self.formatter.handle_plan_refinement(
+                event.step_number,
+                event.refined_step_count,
+                event.refinements,
+            )
+
+        @crewai_event_bus.on(PlanReplanTriggeredEvent)
+        def on_plan_replan_triggered(_: Any, event: PlanReplanTriggeredEvent) -> None:
+            self.formatter.handle_plan_replan(
+                event.replan_reason,
+                event.replan_count,
+                event.completed_steps_preserved,
+            )
+
+        @crewai_event_bus.on(GoalAchievedEarlyEvent)
+        def on_goal_achieved_early(_: Any, event: GoalAchievedEarlyEvent) -> None:
+            self.formatter.handle_goal_achieved_early(
+                event.steps_completed,
+                event.steps_remaining,
+            )
+
         # ----------- AGENT LOGGING EVENTS -----------
 
         @crewai_event_bus.on(AgentLogsStartedEvent)
@@ -655,6 +751,16 @@ class EventListener(BaseEventListener):
                 event.server_name,
                 event.server_url,
                 event.transport_type,
+                event.error,
+                event.error_type,
+            )
+
+        @crewai_event_bus.on(MCPConfigFetchFailedEvent)
+        def on_mcp_config_fetch_failed(
+            _: Any, event: MCPConfigFetchFailedEvent
+        ) -> None:
+            self.formatter.handle_mcp_config_fetch_failed(
+                event.slug,
                 event.error,
                 event.error_type,
             )

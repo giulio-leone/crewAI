@@ -63,6 +63,7 @@ from crewai.events.types.logging_events import (
     AgentLogsStartedEvent,
 )
 from crewai.events.types.mcp_events import (
+    MCPConfigFetchFailedEvent,
     MCPConnectionCompletedEvent,
     MCPConnectionFailedEvent,
     MCPConnectionStartedEvent,
@@ -75,6 +76,7 @@ from crewai.events.types.memory_events import (
     MemoryQueryFailedEvent,
     MemoryQueryStartedEvent,
     MemoryRetrievalCompletedEvent,
+    MemoryRetrievalFailedEvent,
     MemoryRetrievalStartedEvent,
     MemorySaveCompletedEvent,
     MemorySaveFailedEvent,
@@ -85,6 +87,14 @@ from crewai.events.types.reasoning_events import (
     AgentReasoningFailedEvent,
     AgentReasoningStartedEvent,
     ReasoningEvent,
+)
+from crewai.events.types.skill_events import (
+    SkillActivatedEvent,
+    SkillDiscoveryCompletedEvent,
+    SkillDiscoveryStartedEvent,
+    SkillEvent,
+    SkillLoadFailedEvent,
+    SkillLoadedEvent,
 )
 from crewai.events.types.task_events import (
     TaskCompletedEvent,
@@ -164,6 +174,7 @@ __all__ = [
     "LiteAgentExecutionCompletedEvent",
     "LiteAgentExecutionErrorEvent",
     "LiteAgentExecutionStartedEvent",
+    "MCPConfigFetchFailedEvent",
     "MCPConnectionCompletedEvent",
     "MCPConnectionFailedEvent",
     "MCPConnectionStartedEvent",
@@ -174,6 +185,7 @@ __all__ = [
     "MemoryQueryFailedEvent",
     "MemoryQueryStartedEvent",
     "MemoryRetrievalCompletedEvent",
+    "MemoryRetrievalFailedEvent",
     "MemoryRetrievalStartedEvent",
     "MemorySaveCompletedEvent",
     "MemorySaveFailedEvent",
@@ -182,6 +194,12 @@ __all__ = [
     "MethodExecutionFinishedEvent",
     "MethodExecutionStartedEvent",
     "ReasoningEvent",
+    "SkillActivatedEvent",
+    "SkillDiscoveryCompletedEvent",
+    "SkillDiscoveryStartedEvent",
+    "SkillEvent",
+    "SkillLoadFailedEvent",
+    "SkillLoadedEvent",
     "TaskCompletedEvent",
     "TaskEvaluationEvent",
     "TaskFailedEvent",
@@ -193,6 +211,7 @@ __all__ = [
     "ToolUsageFinishedEvent",
     "ToolUsageStartedEvent",
     "ToolValidateInputErrorEvent",
+    "_extension_exports",
     "crewai_event_bus",
 ]
 
@@ -208,14 +227,29 @@ _AGENT_EVENT_MAPPING = {
     "LiteAgentExecutionStartedEvent": "crewai.events.types.agent_events",
 }
 
+_extension_exports: dict[str, Any] = {}
+
 
 def __getattr__(name: str) -> Any:
-    """Lazy import for agent events to avoid circular imports."""
+    """Lazy import for agent events and registered extensions."""
     if name in _AGENT_EVENT_MAPPING:
         import importlib
 
         module_path = _AGENT_EVENT_MAPPING[name]
         module = importlib.import_module(module_path)
         return getattr(module, name)
+
+    if name in _extension_exports:
+        import importlib
+
+        value = _extension_exports[name]
+        if isinstance(value, str):
+            module_path, _, attr_name = value.rpartition(".")
+            if module_path:
+                module = importlib.import_module(module_path)
+                return getattr(module, attr_name)
+            return importlib.import_module(value)
+        return value
+
     msg = f"module {__name__!r} has no attribute {name!r}"
     raise AttributeError(msg)
