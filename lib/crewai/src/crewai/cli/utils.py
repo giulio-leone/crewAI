@@ -701,7 +701,10 @@ def _extract_single_tool_metadata(tool_class: type) -> dict[str, Any] | None:
             module_path = relative_path.with_suffix("")
             if module_path.parts[0] == "src":
                 module_path = Path(*module_path.parts[1:])
-            module = ".".join(module_path.parts)
+            parts = list(module_path.parts)
+            if parts and parts[-1] == "__init__":
+                parts = parts[:-1]
+            module = ".".join(parts)
         except (TypeError, ValueError):
             module = tool_class.__module__
 
